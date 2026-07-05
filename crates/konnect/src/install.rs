@@ -453,7 +453,3 @@ fn detect_kicad_from_registry() -> Option<PathBuf> {
     None
 }
 
-#[cfg(not(target_os = "windows"))]
-fn detect_kicad_from_registry() -> Option<PathBuf> {
-    None
-}
