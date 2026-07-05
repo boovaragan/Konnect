@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Schematic Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: #16213e;
+    border-bottom: 1px solid #0f3460;
+    z-index: 10;
+    flex-shrink: 0;
+  }
+  .toolbar button {
+    background: #0f3460;
+    border: 1px solid #533483;
+    color: #e0e0e0;
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .toolbar button:hover { background: #533483; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .status {
+    font-size: 12px;
+    color: #888;
+  }
+  .toolbar .zoom-display {
+    font-size: 13px;
+    color: #aaa;
+    min-width: 60px;
+    text-align: center;
+  }
+  .toolbar .filename {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e94560;
+  }
+
+  /* SVG Container */
+  #viewer {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    cursor: grab;
+  }
+  #viewer.dragging { cursor: grabbing; }
+  #viewer svg, #viewer img {
+    position: absolute;
+    transform-origin: 0 0;
+  }
+  #svg-container {
+    position: absolute;
+    transform-origin: 0 0;
+  }
+
+  /* Loading / empty state */
+  .overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    z-index: 5;
+  }
+  .overlay h2 { color: #533483; margin-bottom: 8px; }
+  .overlay p { color: #666; font-size: 14px; }
+
+  /* Update flash */
+  .flash {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    background: #0f3460;
+    color: #e94560;
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-size: 13px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: 20;
+  }
+  .flash.visible { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <span class="filename" id="filename">No file loaded</span>
+  <div class="spacer"></div>
+  <button onclick="zoomIn()">Zoom +</button>
+  <button onclick="zoomOut()">Zoom -</button>
+  <span class="zoom-display" id="zoom-display">100%</span>
+  <button onclick="fitToPage()">Fit</button>
+  <button onclick="toggleTheme()">Theme</button>
+  <button onclick="openInKicad()">Open in KiCAD</button>
+  <span class="status" id="status">Waiting...</span>
+</div>
+
+<div id="viewer">
+  <div id="svg-container"></div>
+  <div class="overlay" id="empty-state">
+    <h2>Konnect</h2>
+    <p>Schematic Viewer</p>
+    <p style="margin-top:12px; color:#444">Drag a .kicad_sch file here or use the MCP tool to open</p>
+  </div>
+</div>
+
+<div class="flash" id="flash">Updated</div>
+
+<script>
+  const { invoke } = window.__TAURI__.core;
+  const { listen } = window.__TAURI__.event;
+  const { getCurrentWindow } = window.__TAURI__.window;
+
+  let scale = 1;
+  let panX = 0, panY = 0;
+  let isDragging = false;
+  let dragStartX, dragStartY;
+  let darkTheme = true;
+
+  const viewer = document.getElementById('viewer');
+  const container = document.getElementById('svg-container');
+  const zoomDisplay = document.getElementById('zoom-display');
+  const statusEl = document.getElementById('status');
+  const flashEl = document.getElementById('flash');
+  const emptyState = document.getElementById('empty-state');
+  const filenameEl = document.getElementById('filename');
+
+  function updateTransform() {
+    container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    zoomDisplay.textContent = Math.round(scale * 100) + '%';
+  }
+
+  function setSvg(svgContent) {
+    container.innerHTML = svgContent;
+    emptyState.style.display = 'none';
+
+    // Make SVG background transparent for theming
+    const svgEl = container.querySelector('svg');
+    if (svgEl) {
+      svgEl.style.background = 'transparent';
+      // Remove fixed width/height, let our transform handle sizing
+      if (!svgEl.getAttribute('viewBox') && svgEl.getAttribute('width')) {
+        const w = parseFloat(svgEl.getAttribute('width'));
+        const h = parseFloat(svgEl.getAttribute('height'));
+        if (w && h) svgEl.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      }
+    }
+  }
+
+  function flash(msg) {
+    flashEl.textContent = msg || 'Updated';
+    flashEl.classList.add('visible');
+    setTimeout(() => flashEl.classList.remove('visible'), 1500);
+  }
+
+  function fitToPage() {
+    const svgEl = container.querySelector('svg');
+    if (!svgEl) return;
+    const vb = svgEl.getAttribute('viewBox');
+    if (!vb) return;
+    const [, , svgW, svgH] = vb.split(/\s+/).map(Number);
+    const viewW = viewer.clientWidth;
+    const viewH = viewer.clientHeight;
+    scale = Math.min(viewW / svgW, viewH / svgH) * 0.95;
+    panX = (viewW - svgW * scale) / 2;
+    panY = (viewH - svgH * scale) / 2;
+    updateTransform();
+  }
+
+  function zoomIn() { scale *= 1.25; updateTransform(); }
+  function zoomOut() { scale *= 0.8; updateTransform(); }
+
+  function toggleTheme() {
+    darkTheme = !darkTheme;
+    document.body.style.background = darkTheme ? '#1a1a2e' : '#ffffff';
+    // Invert SVG colors for light theme
+    const svgEl = container.querySelector('svg');
+    if (svgEl) {
+      svgEl.style.filter = darkTheme ? 'invert(0.85) hue-rotate(180deg)' : 'none';
+    }
+  }
+
+  async function openInKicad() {
+    try {
+      await invoke('open_in_kicad');
+      statusEl.textContent = 'Opened in KiCAD';
+    } catch (e) {
+      statusEl.textContent = 'Error: ' + e;
+    }
+  }
+
+  // Mouse wheel zoom (centered on cursor)
+  viewer.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = viewer.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+    const newScale = scale * zoomFactor;
+
+    // Adjust pan to zoom toward cursor
+    panX = mouseX - (mouseX - panX) * (newScale / scale);
+    panY = mouseY - (mouseY - panY) * (newScale / scale);
+    scale = newScale;
+
+    updateTransform();
+  }, { passive: false });
+
+  // Mouse drag pan
+  viewer.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    dragStartX = e.clientX - panX;
+    dragStartY = e.clientY - panY;
+    viewer.classList.add('dragging');
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    panX = e.clientX - dragStartX;
+    panY = e.clientY - dragStartY;
+    updateTransform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    isDragging = false;
+    viewer.classList.remove('dragging');
+  });
+
+  // Keyboard shortcuts
+  window.addEventListener('keydown', (e) => {
+    if (e.key === '+' || e.key === '=') zoomIn();
+    else if (e.key === '-') zoomOut();
+    else if (e.key === '0') fitToPage();
+    else if (e.key === 'r' || e.key === 'R') manualRefresh();
+  });
+
+  async function manualRefresh() {
+    try {
+      statusEl.textContent = 'Refreshing...';
+      const svg = await invoke('refresh');
+      setSvg(svg);
+      flash('Refreshed');
+      statusEl.textContent = 'Ready';
+    } catch (e) {
+      statusEl.textContent = 'Error: ' + e;
+    }
+  }
+
+  // Listen for file change events from Rust backend
+  listen('schematic-updated', (event) => {
+    setSvg(event.payload);
+    flash('File changed — updated');
+    statusEl.textContent = 'Live';
+  });
+
+  // Initial load — check if a path was passed via CLI args
+  async function init() {
+    // Get CLI args from Tauri (the schematic path)
+    try {
+      // Check if launched with a file argument
+      // Tauri v2 doesn't expose CLI args directly in JS easily,
+      // so we'll have the Rust side pass it via a custom command
+      statusEl.textContent = 'Ready — use open_schematic_viewer MCP tool';
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  // Expose global for Rust to call
+  window.loadSchematic = async function(path) {
+    try {
+      filenameEl.textContent = path.split(/[\\/]/).pop();
+      statusEl.textContent = 'Rendering...';
+      const svg = await invoke('open_schematic', { path });
+      setSvg(svg);
+
+      // Apply dark theme inversion
+      const svgEl = container.querySelector('svg');
+      if (svgEl && darkTheme) {
+        svgEl.style.filter = 'invert(0.85) hue-rotate(180deg)';
+      }
+
+      fitToPage();
+      statusEl.textContent = 'Watching for changes...';
+    } catch (e) {
+      statusEl.textContent = 'Error: ' + e;
+      console.error(e);
+    }
+  };
+
+  init();
+</script>
+</body>
+</html>

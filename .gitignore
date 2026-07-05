@@ -1,0 +1,9 @@
+/target/
+crates/*/target/
+crates/schematic-viewer/target/
+*.exe
+*.dll
+*.so
+*.dylib
+*.tmp
+*.bak

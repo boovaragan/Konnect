@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/tauri/packages/tauri/schema.json",
+  "productName": "Konnect Schematic Viewer",
+  "version": "0.1.0",
+  "identifier": "com.konnect.schematic-viewer",
+  "build": {
+    "frontendDist": "frontend"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Schematic Viewer — Konnect",
+        "width": 1280,
+        "height": 900,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": false
+  }
+}
