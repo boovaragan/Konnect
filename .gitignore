@@ -7,3 +7,4 @@ crates/schematic-viewer/target/
 *.dylib
 *.tmp
 *.bak
+dist/

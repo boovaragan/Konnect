@@ -45,7 +45,9 @@ conventions, wiring patterns, and design-review checklists out of the box.
 
 ### From the KiCAD Plugin Manager (recommended)
 
-1. Download the latest release zip from [Releases](https://github.com/mixelpixx/Konnect/releases)
+1. Download `konnect-pcm-v<version>.zip` from [Releases](https://github.com/mixelpixx/Konnect/releases)
+   (the `konnect-pcm-*` asset is the KiCAD plugin package; the other archives are
+   standalone server binaries)
 2. Open KiCAD 10 → **Plugin and Content Manager**
 3. Click **Install from File** and select the zip
 4. Restart KiCAD

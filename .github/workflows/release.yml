@@ -69,9 +69,47 @@ jobs:
           name: ${{ env.BINARY_NAME }}-${{ matrix.target }}
           path: ${{ env.BINARY_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.*
 
+  pcm-package:
+    name: KiCAD PCM plugin package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pcm-package
+
+      - name: Build server binary
+        run: cargo build --release -p konnect
+
+      - name: Build schematic viewer (optional)
+        continue-on-error: true
+        run: cargo build --release --manifest-path crates/schematic-viewer/Cargo.toml
+
+      - name: Assemble PCM package
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          ./packaging/build-pcm.ps1 -Version $version `
+            -BinaryPath target/release/konnect.exe `
+            -ViewerPath crates/schematic-viewer/target/release/schematic-viewer.exe `
+            -OutDir dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: konnect-pcm
+          path: dist/konnect-pcm-*.zip
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, pcm-package]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
