@@ -27,7 +27,6 @@ Opening an issue is the best way to influence priority.
 
 ## Infrastructure
 
-- **Component search caching** for repeated queries against the local parts DB.
 - **Deeper end-to-end tests** — tool-handler tests against a mocked IPC endpoint.
 
 ## Done
@@ -43,3 +42,6 @@ Opening an issue is the best way to influence priority.
   both LCSC datasheet lookups now retry transient failures (network errors,
   429, 5xx) with exponential backoff via `get_with_backoff` in
   `crates/konnect-core/src/tools/integration.rs`.
+- ~~Component search caching~~ — `search_jlcpcb_parts`, `get_jlcpcb_part`, and
+  `suggest_jlcpcb_alternatives` now cache results for 5 minutes via a shared
+  `QueryCache` on `ToolContext`; responses carry a `"cached"` field.

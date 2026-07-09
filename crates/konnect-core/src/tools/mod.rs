@@ -79,6 +79,8 @@ pub struct ToolContext {
     pub config: ServerConfig,
     pub router: Arc<ToolRouter>,
     pub observer: crate::observability::CallObserver,
+    /// In-memory TTL cache for repeated JLCPCB parts-database queries.
+    pub jlcpcb_cache: QueryCache,
 }
 
 impl ToolContext {
@@ -89,6 +91,7 @@ impl ToolContext {
             config,
             router,
             observer: crate::observability::CallObserver::new(None),
+            jlcpcb_cache: QueryCache::default(),
         }
     }
 
@@ -103,7 +106,54 @@ impl ToolContext {
             config,
             router,
             observer,
+            jlcpcb_cache: QueryCache::default(),
         }
+    }
+}
+
+// ─── QueryCache ───────────────────────────────────────────────────────────────
+
+/// A small in-memory, TTL-based cache for repeated read-only query results
+/// (JSON values keyed by a caller-constructed string). One instance lives on
+/// `ToolContext` for the life of the server, shared across all tool calls.
+pub struct QueryCache {
+    ttl: std::time::Duration,
+    entries: std::sync::Mutex<std::collections::HashMap<String, (Value, std::time::Instant)>>,
+}
+
+impl QueryCache {
+    pub fn new(ttl: std::time::Duration) -> Self {
+        QueryCache {
+            ttl,
+            entries: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Returns a cached value for `key` if present and not yet expired.
+    pub fn get(&self, key: &str) -> Option<Value> {
+        let entries = self.entries.lock().unwrap();
+        entries.get(key).and_then(|(value, inserted_at)| {
+            if inserted_at.elapsed() < self.ttl {
+                Some(value.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Stores `value` under `key`, overwriting any existing (possibly expired) entry.
+    pub fn put(&self, key: String, value: Value) {
+        let mut entries = self.entries.lock().unwrap();
+        entries.insert(key, (value, std::time::Instant::now()));
+    }
+}
+
+impl Default for QueryCache {
+    /// 5-minute TTL — long enough to skip redundant re-queries within a single
+    /// design session, short enough that a `download_jlcpcb_database` refresh
+    /// is reflected without needing an explicit cache-invalidation hook.
+    fn default() -> Self {
+        QueryCache::new(std::time::Duration::from_secs(300))
     }
 }
 
@@ -118,6 +168,42 @@ pub struct ServerConfig {
     pub ipc_address: String,
     pub project_dir: Option<std::path::PathBuf>,
     pub jlcpcb_db_path: Option<std::path::PathBuf>,
+}
+
+#[cfg(test)]
+mod query_cache_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn miss_on_unknown_key() {
+        let cache = QueryCache::new(std::time::Duration::from_secs(60));
+        assert!(cache.get("nope").is_none());
+    }
+
+    #[test]
+    fn put_then_get_roundtrips() {
+        let cache = QueryCache::new(std::time::Duration::from_secs(60));
+        cache.put("key".to_string(), json!({ "count": 3 }));
+        assert_eq!(cache.get("key"), Some(json!({ "count": 3 })));
+    }
+
+    #[test]
+    fn entry_expires_after_ttl() {
+        let cache = QueryCache::new(std::time::Duration::from_millis(10));
+        cache.put("key".to_string(), json!("value"));
+        assert_eq!(cache.get("key"), Some(json!("value")));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(cache.get("key").is_none());
+    }
+
+    #[test]
+    fn put_overwrites_existing_entry() {
+        let cache = QueryCache::new(std::time::Duration::from_secs(60));
+        cache.put("key".to_string(), json!("first"));
+        cache.put("key".to_string(), json!("second"));
+        assert_eq!(cache.get("key"), Some(json!("second")));
+    }
 }
 
 // ─── Helper macro for defining tools ─────────────────────────────────────────

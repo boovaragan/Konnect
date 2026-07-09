@@ -7,6 +7,12 @@
 //! The three network calls (JLCPCB database download, LCSC datasheet lookups)
 //! go through `get_with_backoff`, which retries transient failures (network
 //! errors, 429, 5xx) with exponential backoff before giving up.
+//!
+//! The three JLCPCB query tools (`search_jlcpcb_parts`, `get_jlcpcb_part`,
+//! `suggest_jlcpcb_alternatives`) cache results in `ToolContext::jlcpcb_cache`
+//! (5-minute TTL) to avoid re-running an identical SQLite query for repeated
+//! lookups within a session. Responses carry a `"cached"` field so callers
+//! can see whether a given result came from cache.
 
 use crate::mcp::protocol::CallToolResult;
 use crate::tool;
@@ -283,6 +289,13 @@ async fn handle_download_jlcpcb(
     ))
 }
 
+/// Build a deterministic cache key from a tool name, the resolved DB path
+/// (so pointing at a different `output_path` never serves stale results),
+/// and the query parameters that affect the result set.
+fn cache_key(tool: &str, db_path: &std::path::Path, parts: &[&str]) -> String {
+    format!("{}|{}|{}", tool, db_path.display(), parts.join("|"))
+}
+
 async fn handle_search_jlcpcb_parts(
     args: &serde_json::Value,
     ctx: &ToolContext,
@@ -299,6 +312,25 @@ async fn handle_search_jlcpcb_parts(
     let in_stock = args["in_stock"].as_bool().unwrap_or(true);
     let limit = args["limit"].as_u64().unwrap_or(20) as usize;
     let category = args["category"].as_str().map(String::from);
+
+    let key = cache_key(
+        "search_jlcpcb_parts",
+        &db_path,
+        &[
+            &query,
+            category.as_deref().unwrap_or(""),
+            &basic_only.to_string(),
+            &in_stock.to_string(),
+            &limit.to_string(),
+        ],
+    );
+    if let Some(cached) = ctx.jlcpcb_cache.get(&key) {
+        let mut body = cached;
+        body["cached"] = json!(true);
+        return Ok(CallToolResult::text(
+            serde_json::to_string_pretty(&body).unwrap(),
+        ));
+    }
 
     let results = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<serde_json::Value>> {
         let conn = rusqlite::Connection::open(&db_path)?;
@@ -337,13 +369,17 @@ async fn handle_search_jlcpcb_parts(
     })
     .await??;
 
+    let body = json!({
+        "query": args["query"].as_str().unwrap_or(""),
+        "count": results.len(),
+        "results": results
+    });
+    ctx.jlcpcb_cache.put(key, body.clone());
+
+    let mut body = body;
+    body["cached"] = json!(false);
     Ok(CallToolResult::text(
-        serde_json::to_string_pretty(&json!({
-            "query": args["query"].as_str().unwrap_or(""),
-            "count": results.len(),
-            "results": results
-        }))
-        .unwrap(),
+        serde_json::to_string_pretty(&body).unwrap(),
     ))
 }
 
@@ -374,6 +410,14 @@ async fn handle_get_jlcpcb_part(
         .map_err(|e| anyhow::anyhow!("{:?}", e))?
         .to_string();
 
+    let key = cache_key("get_jlcpcb_part", &db_path, &[&lcsc_id]);
+    if let Some(mut cached) = ctx.jlcpcb_cache.get(&key) {
+        cached["cached"] = json!(true);
+        return Ok(CallToolResult::text(
+            serde_json::to_string_pretty(&cached).unwrap(),
+        ));
+    }
+
     let result =
         tokio::task::spawn_blocking(move || -> anyhow::Result<Option<serde_json::Value>> {
             let conn = rusqlite::Connection::open(&db_path)?;
@@ -387,9 +431,14 @@ async fn handle_get_jlcpcb_part(
         .await??;
 
     match result {
-        Some(part) => Ok(CallToolResult::text(
-            serde_json::to_string_pretty(&part).unwrap(),
-        )),
+        Some(part) => {
+            ctx.jlcpcb_cache.put(key, part.clone());
+            let mut part = part;
+            part["cached"] = json!(false);
+            Ok(CallToolResult::text(
+                serde_json::to_string_pretty(&part).unwrap(),
+            ))
+        }
         None => Ok(CallToolResult::error(format!(
             "Part not found in database: {}",
             args["lcsc_id"].as_str().unwrap_or("")
@@ -422,6 +471,24 @@ async fn handle_suggest_alternatives(
         .unwrap_or("")
         .to_string();
 
+    let key = cache_key(
+        "suggest_jlcpcb_alternatives",
+        &db_path,
+        &[
+            &value,
+            &footprint,
+            &max_price.map(|v| v.to_string()).unwrap_or_default(),
+            &limit.to_string(),
+        ],
+    );
+    if let Some(cached) = ctx.jlcpcb_cache.get(&key) {
+        let mut body = cached;
+        body["cached"] = json!(true);
+        return Ok(CallToolResult::text(
+            serde_json::to_string_pretty(&body).unwrap(),
+        ));
+    }
+
     let results = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<serde_json::Value>> {
         let conn = rusqlite::Connection::open(&db_path)?;
         let like_val = format!("%{}%", value);
@@ -445,13 +512,17 @@ async fn handle_suggest_alternatives(
     })
     .await??;
 
+    let body = json!({
+        "value": args["value"].as_str().unwrap_or(""),
+        "footprint": args["footprint"].as_str().unwrap_or(""),
+        "alternatives": results
+    });
+    ctx.jlcpcb_cache.put(key, body.clone());
+
+    let mut body = body;
+    body["cached"] = json!(false);
     Ok(CallToolResult::text(
-        serde_json::to_string_pretty(&json!({
-            "value": args["value"].as_str().unwrap_or(""),
-            "footprint": args["footprint"].as_str().unwrap_or(""),
-            "alternatives": results
-        }))
-        .unwrap(),
+        serde_json::to_string_pretty(&body).unwrap(),
     ))
 }
 
@@ -852,5 +923,132 @@ mod retry_backoff_tests {
         // attempt is 1-based in normal use, but the saturating_sub guards
         // against an accidental 0 causing an underflow panic.
         assert_eq!(backoff_delay(0), std::time::Duration::from_millis(300));
+    }
+}
+
+#[cfg(test)]
+mod jlcpcb_cache_tests {
+    use super::*;
+    use crate::router::ToolRouter;
+    use crate::tools::ServerConfig;
+    use std::sync::Arc;
+
+    fn test_ctx() -> ToolContext {
+        ToolContext::new(
+            ServerConfig {
+                kicad_cli: String::new(),
+                kicad_binary: String::new(),
+                ipc_address: String::new(),
+                project_dir: None,
+                jlcpcb_db_path: None,
+            },
+            Arc::new(ToolRouter::new()),
+        )
+    }
+
+    /// Builds a temp SQLite file with a `components` table matching the
+    /// schema the handlers query, seeded with one part.
+    fn seed_test_db() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("jlcpcb.db");
+        let conn = rusqlite::Connection::open(&db_path).expect("open db");
+        conn.execute(
+            "CREATE TABLE components (
+                LCSC TEXT, MFR_Part TEXT, Package TEXT, Manufacturer TEXT,
+                Library_Type TEXT, Description TEXT, Price REAL, Stock INTEGER
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO components VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "C14663",
+                "RC0402FR-0710KL",
+                "0402",
+                "YAGEO",
+                "Basic",
+                "10k resistor 0402",
+                0.01,
+                5000
+            ],
+        )
+        .unwrap();
+        (dir, db_path)
+    }
+
+    #[tokio::test]
+    async fn search_jlcpcb_parts_caches_repeated_query() {
+        let (_dir, db_path) = seed_test_db();
+        let ctx = test_ctx();
+        let args = json!({
+            "query": "10k",
+            "output_path": db_path.to_str().unwrap()
+        });
+
+        let first = handle_search_jlcpcb_parts(&args, &ctx).await.unwrap();
+        let second = handle_search_jlcpcb_parts(&args, &ctx).await.unwrap();
+
+        let first_body = response_json(&first);
+        let second_body = response_json(&second);
+        assert_eq!(first_body["cached"], json!(false));
+        assert_eq!(second_body["cached"], json!(true));
+        assert_eq!(first_body["results"], second_body["results"]);
+        assert_eq!(first_body["count"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn search_jlcpcb_parts_different_query_is_a_cache_miss() {
+        let (_dir, db_path) = seed_test_db();
+        let ctx = test_ctx();
+
+        let args_a = json!({ "query": "10k", "output_path": db_path.to_str().unwrap() });
+        let args_b = json!({ "query": "100nF", "output_path": db_path.to_str().unwrap() });
+
+        handle_search_jlcpcb_parts(&args_a, &ctx).await.unwrap();
+        let second = handle_search_jlcpcb_parts(&args_b, &ctx).await.unwrap();
+
+        assert_eq!(response_json(&second)["cached"], json!(false));
+    }
+
+    #[tokio::test]
+    async fn get_jlcpcb_part_caches_repeated_lookup() {
+        let (_dir, db_path) = seed_test_db();
+        let ctx = test_ctx();
+        let args = json!({
+            "lcsc_id": "C14663",
+            "output_path": db_path.to_str().unwrap()
+        });
+
+        let first = handle_get_jlcpcb_part(&args, &ctx).await.unwrap();
+        let second = handle_get_jlcpcb_part(&args, &ctx).await.unwrap();
+
+        assert_eq!(response_json(&first)["cached"], json!(false));
+        assert_eq!(response_json(&second)["cached"], json!(true));
+        assert_eq!(response_json(&first)["lcsc"], json!("C14663"));
+    }
+
+    #[tokio::test]
+    async fn suggest_alternatives_caches_repeated_query() {
+        let (_dir, db_path) = seed_test_db();
+        let ctx = test_ctx();
+        let args = json!({
+            "value": "10k",
+            "footprint": "Resistor_SMD:R_0402",
+            "output_path": db_path.to_str().unwrap()
+        });
+
+        let first = handle_suggest_alternatives(&args, &ctx).await.unwrap();
+        let second = handle_suggest_alternatives(&args, &ctx).await.unwrap();
+
+        assert_eq!(response_json(&first)["cached"], json!(false));
+        assert_eq!(response_json(&second)["cached"], json!(true));
+    }
+
+    fn response_json(result: &CallToolResult) -> serde_json::Value {
+        match &result.content[0] {
+            crate::mcp::protocol::ToolContent::Text { text } => serde_json::from_str(text).unwrap(),
+            _ => panic!("expected text content"),
+        }
     }
 }
