@@ -14,8 +14,6 @@ Opening an issue is the best way to influence priority.
 
 ## Tools
 
-- **`import_svg_logo`** — import an SVG file as silkscreen / copper artwork
-  (path parsing + polygon tessellation, placed via the IPC API).
 - **Hierarchical sheets** — create and manage multi-sheet schematics
   (hierarchical sheets, sheet pins, cross-sheet nets).
 - **Symbol & footprint creation** — author new library parts from scratch, not
@@ -45,3 +43,8 @@ Opening an issue is the best way to influence priority.
 - ~~Component search caching~~ — `search_jlcpcb_parts`, `get_jlcpcb_part`, and
   `suggest_jlcpcb_alternatives` now cache results for 5 minutes via a shared
   `QueryCache` on `ToolContext`; responses carry a `"cached"` field.
+- ~~`import_svg_logo`~~ — import an SVG file as filled silkscreen/copper
+  artwork via the new `import_svg_logo` tool in the `pcb_board` toolset.
+  Curved paths (quadratic/cubic Bezier) are flattened into polygon outlines
+  since KiCAD's board format doesn't support curves in filled shapes. Tries
+  the IPC API first, falls back to a direct file edit if KiCAD isn't running.
