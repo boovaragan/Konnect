@@ -27,7 +27,6 @@ Opening an issue is the best way to influence priority.
 
 ## Infrastructure
 
-- **Retry/backoff for external services** (JLCPCB catalog, datasheet fetches).
 - **Component search caching** for repeated queries against the local parts DB.
 - **Deeper end-to-end tests** — tool-handler tests against a mocked IPC endpoint.
 
@@ -40,3 +39,7 @@ Opening an issue is the best way to influence priority.
   available via `export_ipc2581`, `export_odb`, `export_gencad`, and
   `export_dxf` in the `pcb_export` toolset (all backed by native `kicad-cli`
   subcommands, verified against KiCAD 10.0).
+- ~~Retry/backoff for external services~~ — the JLCPCB database download and
+  both LCSC datasheet lookups now retry transient failures (network errors,
+  429, 5xx) with exponential backoff via `get_with_backoff` in
+  `crates/konnect-core/src/tools/integration.rs`.
