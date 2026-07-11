@@ -121,6 +121,18 @@ impl KiCadIpcClient {
         let socket =
             nng::Socket::new(nng::Protocol::Req0).context("Failed to create NNG socket")?;
 
+        // Bound every step: a busy or wedged KiCAD must produce an error the
+        // tools can surface, never an indefinite hang (the predecessor
+        // project's sync/autoroute hangs blocked for >600 s on exactly this).
+        // 30 s receive allows slow board operations like zone refills.
+        use nng::options::Options;
+        socket
+            .set_opt::<nng::options::SendTimeout>(Some(std::time::Duration::from_secs(5)))
+            .context("Failed to set NNG send timeout")?;
+        socket
+            .set_opt::<nng::options::RecvTimeout>(Some(std::time::Duration::from_secs(30)))
+            .context("Failed to set NNG receive timeout")?;
+
         // Build the dial URL
         let dial_url =
             if self.socket_path.starts_with("ipc://") || self.socket_path.starts_with("tcp://") {

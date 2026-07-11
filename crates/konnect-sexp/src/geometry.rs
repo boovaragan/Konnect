@@ -131,12 +131,7 @@ mod tests {
         }
     }
 
-    fn assert_pin(
-        pin: (f64, f64),
-        tr: PinTransform,
-        expected: (f64, f64),
-        label: &str,
-    ) {
+    fn assert_pin(pin: (f64, f64), tr: PinTransform, expected: (f64, f64), label: &str) {
         let (x, y) = transform_pin(pin.0, pin.1, tr);
         assert!(
             (x - expected.0).abs() < 1e-6 && (y - expected.1).abs() < 1e-6,
@@ -157,13 +152,33 @@ mod tests {
     fn eeschema_ground_truth_rotations() {
         let pin = (0.0, 3.81);
         // rot 0: internal (0, -3.81) → world (100, 96.19)
-        assert_pin(pin, t(100.0, 100.0, 0.0, false, false), (100.0, 96.19), "rot0");
+        assert_pin(
+            pin,
+            t(100.0, 100.0, 0.0, false, false),
+            (100.0, 96.19),
+            "rot0",
+        );
         // rot 90: TRANSFORM(0,1,-1,0): (x,y)→(y,-x): (0,-3.81)→(-3.81, 0)
-        assert_pin(pin, t(100.0, 100.0, 90.0, false, false), (96.19, 100.0), "rot90");
+        assert_pin(
+            pin,
+            t(100.0, 100.0, 90.0, false, false),
+            (96.19, 100.0),
+            "rot90",
+        );
         // rot 180: (x,y)→(-x,-y): (0,-3.81)→(0, 3.81)
-        assert_pin(pin, t(100.0, 100.0, 180.0, false, false), (100.0, 103.81), "rot180");
+        assert_pin(
+            pin,
+            t(100.0, 100.0, 180.0, false, false),
+            (100.0, 103.81),
+            "rot180",
+        );
         // rot 270: (x,y)→(-y,x): (0,-3.81)→(3.81, 0)
-        assert_pin(pin, t(100.0, 100.0, 270.0, false, false), (103.81, 100.0), "rot270");
+        assert_pin(
+            pin,
+            t(100.0, 100.0, 270.0, false, false),
+            (103.81, 100.0),
+            "rot270",
+        );
     }
 
     #[test]
@@ -171,10 +186,20 @@ mod tests {
         let pin = (0.0, 3.81);
         // (mirror x) = SYM_MIRROR_X = TRANSFORM(1,0,0,-1) → negates screen-Y:
         // internal (0,-3.81) → (0, 3.81) → world (100, 103.81)
-        assert_pin(pin, t(100.0, 100.0, 0.0, true, false), (100.0, 103.81), "mirror_x");
+        assert_pin(
+            pin,
+            t(100.0, 100.0, 0.0, true, false),
+            (100.0, 103.81),
+            "mirror_x",
+        );
         // (mirror y) = SYM_MIRROR_Y = TRANSFORM(-1,0,0,1) → negates screen-X:
         // internal (0,-3.81) unchanged in X → world (100, 96.19)
-        assert_pin(pin, t(100.0, 100.0, 0.0, false, true), (100.0, 96.19), "mirror_y");
+        assert_pin(
+            pin,
+            t(100.0, 100.0, 0.0, false, true),
+            (100.0, 96.19),
+            "mirror_y",
+        );
     }
 
     /// The order bug the predecessor shipped: mirror-before-rotation agrees

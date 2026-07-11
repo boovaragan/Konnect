@@ -237,38 +237,55 @@ pub struct LibPin {
 }
 
 /// Parse pins from a library symbol definition node.
+/// Extract every pin of a library symbol, including pins nested inside unit
+/// sub-symbols. KiCAD stores pins under children like `(symbol "Device:R_1_1"
+/// (pin …))`, so a direct-children-only scan finds ZERO pins for standard
+/// library parts — the bug the first real-KiCAD e2e run caught in
+/// `connect_pins` ("Pin '2' not found on 'R1'").
 pub fn extract_lib_pins(sym_node: &SexpNode) -> Vec<LibPin> {
-    sym_node
-        .find_all("pin")
-        .iter()
-        .filter_map(|node| {
-            let (x, y, rotation) = parse_at(node)?;
-            let length = node
-                .find("length")
-                .and_then(|l| l.get_f64(1))
-                .unwrap_or(0.0);
-            let number = node
-                .find("number")
-                .and_then(|n| n.get(1))
-                .and_then(|n| n.as_str())
-                .unwrap_or("")
-                .to_string();
-            let name = node
-                .find("name")
-                .and_then(|n| n.get(1))
-                .and_then(|n| n.as_str())
-                .unwrap_or("")
-                .to_string();
-            Some(LibPin {
-                number,
-                name,
-                local_x: x,
-                local_y: y,
-                rotation,
-                length,
-            })
-        })
-        .collect()
+    let mut out = Vec::new();
+    collect_pins_recursive(sym_node, &mut out);
+    out
+}
+
+fn collect_pins_recursive(node: &SexpNode, out: &mut Vec<LibPin>) {
+    for pin in node.find_all("pin") {
+        if let Some(lib_pin) = parse_lib_pin(pin) {
+            out.push(lib_pin);
+        }
+    }
+    // Recurse into unit/body-style sub-symbols ("R_1_1", "R_1_0", …).
+    for sub in node.find_all("symbol") {
+        collect_pins_recursive(sub, out);
+    }
+}
+
+fn parse_lib_pin(node: &SexpNode) -> Option<LibPin> {
+    let (x, y, rotation) = parse_at(node)?;
+    let length = node
+        .find("length")
+        .and_then(|l| l.get_f64(1))
+        .unwrap_or(0.0);
+    let number = node
+        .find("number")
+        .and_then(|n| n.get(1))
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .to_string();
+    let name = node
+        .find("name")
+        .and_then(|n| n.get(1))
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some(LibPin {
+        number,
+        name,
+        local_x: x,
+        local_y: y,
+        rotation,
+        length,
+    })
 }
 
 /// Compute the schematic-space pin endpoint (where wires connect) for a lib pin

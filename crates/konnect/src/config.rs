@@ -231,9 +231,15 @@ mod tests {
 
     #[test]
     fn partial_toml_overrides_only_named_fields() {
-        let f = write_temp("toml", "transport = \"http\"\nhttp_address = \"127.0.0.1:9999\"\n");
+        let f = write_temp(
+            "toml",
+            "transport = \"http\"\nhttp_address = \"127.0.0.1:9999\"\n",
+        );
         let c = Config::load_from(f.path()).unwrap();
-        assert!(matches!(c.transport, TransportMode::Both | TransportMode::Http));
+        assert!(matches!(
+            c.transport,
+            TransportMode::Both | TransportMode::Http
+        ));
         assert!(matches!(c.transport, TransportMode::Http));
         assert_eq!(c.http_address, "127.0.0.1:9999");
         assert_eq!(c.log_level, "info"); // untouched default

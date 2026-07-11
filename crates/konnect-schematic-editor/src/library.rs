@@ -48,11 +48,12 @@ pub fn resolve_lib_symbol(lib_id: &str) -> Option<String> {
                             );
                         }
                     }
-                    // Also fix sub-symbol names: (symbol "Name_0_1") → (symbol "Lib:Name_0_1")
-                    // These are unit/variant sub-symbols that KiCAD prefixes in lib_symbols
-                    let sub_prefix = format!("(symbol \"{}_", symbol_name);
-                    let new_sub_prefix = format!("(symbol \"{}:{}_", library_name, symbol_name);
-                    renamed = renamed.replace(&sub_prefix, &new_sub_prefix);
+                    // Unit sub-symbols ("Name_0_1", "Name_1_1") must stay
+                    // UNPREFIXED: eeschema names only the outer symbol with
+                    // the library prefix and refuses to load a schematic
+                    // whose units carry it ("Failed to load schematic" —
+                    // verified against kicad-cli 10.0 and the KiCAD demo
+                    // corpus, which embeds units without the prefix).
                     return Some(renamed);
                 }
             }
