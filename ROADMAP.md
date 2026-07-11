@@ -17,9 +17,6 @@ Opening an issue is the best way to influence priority.
 - **Symbol & footprint creation** — author new library parts from scratch, not
   just search and place existing ones.
 - **Eagle project import** — migrate legacy Eagle designs.
-- **Multi-sheet schematic viewer** — `kicad-cli sch export svg` emits one SVG
-  per sheet; the live viewer currently shows only the root sheet. Add a sheet
-  selector for hierarchical designs.
 
 ## Infrastructure
 
@@ -51,3 +48,8 @@ Opening an issue is the best way to influence priority.
   Curved paths (quadratic/cubic Bezier) are flattened into polygon outlines
   since KiCAD's board format doesn't support curves in filled shapes. Tries
   the IPC API first, falls back to a direct file edit if KiCAD isn't running.
+- ~~Multi-sheet schematic viewer~~ — point the viewer at the root schematic of a
+  hierarchical design and it walks every reachable sheet, renders each via
+  `kicad-cli`, and offers a depth-indented sheet selector. Edits saved from KiCAD
+  re-render only the changed sheets and refresh live; rendering runs against
+  temp-folder snapshots so the viewer never blocks KiCAD from saving.

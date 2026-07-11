@@ -17,6 +17,13 @@ cd crates/schematic-viewer
 cargo build --release
 ```
 
+Schematic-viewer build notes (Windows):
+
+- If `cargo` is not recognized in a fresh shell, add it to the session PATH first:
+  `set PATH=%PATH%;%USERPROFILE%\.cargo\bin`
+- Close any running viewer window before rebuilding — Windows locks a running
+  `.exe`, so the link step fails while the app is open.
+
 ## Architecture
 
 ```
@@ -83,8 +90,9 @@ Konnect/
 │   │
 │   └── schematic-viewer/            # Tauri desktop app (separate from workspace)
 │       ├── tauri.conf.json
-│       ├── src/main.rs               # File watcher + kicad-cli SVG rendering + Tauri commands
-│       └── frontend/index.html       # Pan/zoom SVG viewer with auto-refresh
+│       ├── capabilities/default.json # Tauri 2 ACL grant (core:default) — without it event.listen() is silently denied
+│       ├── src/main.rs               # Multi-sheet watcher + snapshot-isolated incremental kicad-cli SVG rendering + Tauri commands, 20 unit tests
+│       └── frontend/index.html       # Pan/zoom SVG viewer, sheet selector, auto-refresh
 │
 ├── plugin/                           # Python thin launcher (runs inside KiCAD)
 │   ├── __init__.py                   # pcbnew.ActionPlugin — settings dialog (PCB Editor only)
@@ -200,7 +208,14 @@ The router is defined in `crates/konnect-core/src/router/mod.rs`.
 - `protoc` binary (for protobuf code generation in konnect-ipc crate)
   - Set `PROTOC` environment variable or install on PATH
   - Download: https://github.com/protocolbuffers/protobuf/releases
-- For schematic-viewer: Tauri 2 prerequisites (WebView2 on Windows — usually pre-installed)
+- For schematic-viewer (built separately from the workspace — see Quick Start):
+  - Rust toolchain on PATH (Windows: `set PATH=%PATH%;%USERPROFILE%\.cargo\bin` if `cargo`
+    isn't recognized in the shell)
+  - Tauri 2 prerequisites: WebView2 runtime on Windows (usually pre-installed on Win 10/11)
+  - At runtime it discovers `kicad-cli` from the standard KiCAD install paths, then PATH;
+    override with `--kicad-cli <path>`
+  - Rebuilds fail while a viewer window is open (Windows locks the running `.exe`) — close
+    the app before `cargo build`
 
 ## Test Suite
 
@@ -212,6 +227,16 @@ Run all: `PROTOC=<path> cargo test --workspace --lib --tests`
 | `konnect-core` unit tests | Router load/unload, starter-kit, registry invariants, observability, error taxonomy, arg helpers |
 | `konnect-core` integration tests | Fixture files: parse, edit, write, observability, structured errors |
 | `konnect-schematic-editor` tests | Typed schematic model + round-tripping |
+
+`schematic-viewer` is **excluded from the workspace** (`Cargo.toml`'s `[workspace] exclude`) since
+it's a Tauri app built separately — `cargo test --workspace` never touches it, and neither does
+CI (`.github/workflows/ci.yml` runs everything with `--workspace`). Run its tests explicitly:
+`cd crates/schematic-viewer && cargo test`. Its 20 unit tests cover the pure sheet-tree-walking,
+watch-directory, render-snapshot, event-debounce, and incremental-render-selection logic
+(`walk_sheet_tree`, `compute_watch_dirs`, `snapshot_tree`, `drain_until_quiet`,
+`files_needing_render`, `render_all`'s error handling) — the actual `kicad-cli` subprocess call
+and Tauri command/event plumbing stay thin and untested, matching this codebase's existing
+convention for other `kicad-cli`-calling code.
 
 ## Adding a New Tool
 
